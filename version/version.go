@@ -9,12 +9,12 @@ import (
 
 // NOTE: these variables are populated at compile time by using the -ldflags
 // linker flag:
-//   $> go build -ldflags "-X github.com/dihedron/netcheck/version.GitHash=$(hash)"
+//   $> go build -ldflags "-X github.com/dihedron/diffuse/version.GitHash=$(hash)"
 // in order to get the package path to the GitHash variable to use in the
 // linker flag, use the nm utility and look for the variable in the built
 // application symbols, then use its path in the linker flag:
-//   $> nm ./netcheck | grep GitHash
-//   00000000015db9c0 b github.com/dihedron/netcheck/version.GitHash
+//   $> nm ./diffuse | grep GitHash
+//   00000000015db9c0 b github.com/dihedron/diffuse/version.GitHash
 
 var (
 	// Name is the name of the application or plugin.
