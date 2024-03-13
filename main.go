@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"log/slog"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/jessevdk/go-flags"
 )
 
 func init() {
@@ -26,7 +26,19 @@ func init() {
 		AddSource: true,
 	}
 
-	level, ok := os.LookupEnv("DIFFUSE_LOG_LEVEL")
+	// my-app -> MY_APP_LOG_LEVEL
+	level, ok := os.LookupEnv(
+		fmt.Sprintf(
+			"%s_LOG_LEVEL",
+			strings.ReplaceAll(
+				strings.ToUpper(
+					path.Base(os.Args[0]),
+				),
+				"-",
+				"_",
+			),
+		),
+	)
 	if ok {
 		switch strings.ToLower(level) {
 		case "debug", "dbg", "d", "trace", "trc", "t":
@@ -66,53 +78,54 @@ func writeMemProfile(fn string, sigs <-chan os.Signal) {
 }
 
 func main() {
-	log.SetFlags(log.Lmicroseconds)
-	// Scans the arg list and sets up flags
-	debug := flag.Bool("debug", false, "print debugging messages.")
-	other := flag.Bool("allow-other", false, "mount with -o allowother.")
-	quiet := flag.Bool("q", false, "quiet")
-	ro := flag.Bool("ro", false, "mount read-only")
-	directmount := flag.Bool("directmount", false, "try to call the mount syscall instead of executing fusermount")
-	directmountstrict := flag.Bool("directmountstrict", false, "like directmount, but don't fall back to fusermount")
-	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to this file")
-	memprofile := flag.String("memprofile", "", "write memory profile to this file")
-	flag.Parse()
-	if flag.NArg() < 2 {
-		fmt.Printf("usage: %s MOUNTPOINT ORIGINAL\n", path.Base(os.Args[0]))
-		fmt.Printf("\noptions:\n")
-		flag.PrintDefaults()
-		os.Exit(2)
+
+	var options struct {
+		Version     bool    `short:"v" long:"version" description:"Show version information"`
+		AllowOther  bool    `short:"o" long:"allow-other" description:"Mount with -o allowother"`
+		ReadOnly    bool    `short:"r" long:"read-only" description:"Mount with -o ro (readonly)"`
+		DirectMount bool    `short:"d" long:"direct-mount" description:"Try to call the mount syscall instead of executing fusermount"`
+		Strict      bool    `short:"s" long:"strict" description:"Associated with --direct-mount, doesn't fall back to fusermount if mount fails"`
+		CpuProfile  *string `short:"c" long:"cpu-profile" description:"Write CPU profile to the given file"`
+		MemProfile  *string `short:"m" long:"mem-profile" description:"Write Memory profile to the given file when SIGUSR1 is received"`
+		Debug       bool    `short:"D" long:"debug" description:"Print debugging messages"`
+		Args        struct {
+			Mountpoint string
+			Underlying string
+		} `positional-args:"yes" required:"yes"`
 	}
-	if *cpuprofile != "" {
-		if !*quiet {
-			fmt.Printf("Writing cpu profile to %s\n", *cpuprofile)
-		}
-		f, err := os.Create(*cpuprofile)
+
+	args, err := flags.Parse(&options)
+	if err != nil {
+		slog.Error("error parsing command line", "error", err)
+		os.Exit(1)
+	}
+
+	slog.Debug("args", "len", len(args))
+	if options.CpuProfile != nil {
+		slog.Info("writing cpu profile", "filename", *options.CpuProfile)
+		f, err := os.Create(*options.CpuProfile)
 		if err != nil {
-			fmt.Println(err)
+			slog.Error("error opening CPU profile output file", "filename", *options.CpuProfile, "error", err)
 			os.Exit(3)
 		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
 	}
-	if *memprofile != "" {
-		if !*quiet {
-			log.Printf("send SIGUSR1 to %d to dump memory profile", os.Getpid())
-		}
-		profSig := make(chan os.Signal, 1)
-		signal.Notify(profSig, syscall.SIGUSR1)
-		go writeMemProfile(*memprofile, profSig)
+	if options.MemProfile != nil {
+		slog.Info("send SIGUSR1 to dump memory profile", "pid", os.Getpid())
+		profile := make(chan os.Signal, 1)
+		signal.Notify(profile, syscall.SIGUSR1)
+		go writeMemProfile(*options.MemProfile, profile)
 	}
-	if *cpuprofile != "" || *memprofile != "" {
-		if !*quiet {
-			fmt.Printf("Note: You must unmount gracefully, otherwise the profile file(s) will stay empty!\n")
-		}
+	if options.CpuProfile != nil || options.MemProfile != nil {
+		slog.Info("you must unmount gracefully, otherwise the profile file(s) will stay empty!")
 	}
 
-	orig := flag.Arg(1)
-	loopbackRoot, err := fs.NewLoopbackRoot(orig)
+	slog.Debug("creating loopback root", "original", options.Args.Underlying)
+	loopbackRoot, err := fs.NewLoopbackRoot(options.Args.Underlying)
 	if err != nil {
-		log.Fatalf("NewLoopbackRoot(%s): %v\n", orig, err)
+		slog.Error("error creating loopback filesystem", "original", options.Args.Underlying, "error", err)
+		os.Exit(1)
 	}
 
 	sec := time.Second
@@ -125,39 +138,41 @@ func main() {
 		NullPermissions: true, // Leave file permissions on "000" files as-is
 
 		MountOptions: fuse.MountOptions{
-			AllowOther:        *other,
-			Debug:             *debug,
-			DirectMount:       *directmount,
-			DirectMountStrict: *directmountstrict,
-			FsName:            orig,       // First column in "df -T": original dir
-			Name:              "loopback", // Second column in "df -T" will be shown as "fuse." + Name
+			AllowOther:        options.AllowOther,
+			Debug:             options.Debug,
+			DirectMount:       options.DirectMount,
+			DirectMountStrict: options.DirectMount && options.Strict,
+			FsName:            options.Args.Underlying, // First column in "df -T": original dir
+			Name:              "diffuse",               // Second column in "df -T" will be shown as "fuse." + Name
 		},
 	}
 	if opts.AllowOther {
 		// Make the kernel check file permissions for us
 		opts.MountOptions.Options = append(opts.MountOptions.Options, "default_permissions")
 	}
-	if *ro {
+	if options.ReadOnly {
 		opts.MountOptions.Options = append(opts.MountOptions.Options, "ro")
 	}
 	// Enable diagnostics logging
-	if !*quiet {
+	if options.Debug {
 		opts.Logger = log.New(os.Stderr, "", 0)
 	}
-	server, err := fs.Mount(flag.Arg(0), loopbackRoot, opts)
+	server, err := fs.Mount(options.Args.Mountpoint, loopbackRoot, opts)
 	if err != nil {
-		log.Fatalf("Mount fail: %v\n", err)
+		slog.Error("loopback filesystem mount failed", "original", options.Args.Underlying, "mountpoint", options.Args.Mountpoint, "error", err)
+		os.Exit(1)
 	}
-	if !*quiet {
-		fmt.Println("Mounted!")
-	}
+	slog.Info("loopback filesystem mounted", "original", options.Args.Underlying, "mountpoint", options.Args.Mountpoint)
 
 	signals := make(chan os.Signal, 1)
+	// done := make(chan bool, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-signals
 		server.Unmount()
+		// done <- true
 	}()
 
 	server.Wait()
+	// <-done
 }

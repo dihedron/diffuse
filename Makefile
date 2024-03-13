@@ -70,16 +70,25 @@ endif
 		fi; \
 	done
 	
-
-.PHONY: optimise
-optimise:
+.PHONY: compress
+compress:
 ifeq (, $(shell which upx))
+	@echo "Need to install UPX first..."
 	@sudo apt install upx
 endif	
-	@for binary in `find dist/ -name 'diffuse'`; do \
+	@for binary in `find dist/ -type f -regex '.*netcheck[\.exe]*'`; do \
 		upx -9 $$binary; \
-	done;
+	done;	
 
+.PHONY: extra-compress
+extra-compress:
+ifeq (, $(shell which upx))
+	@echo "Need to install UPX first..."
+	@sudo apt install upx
+endif	
+	@for binary in `find dist/ -type f -regex '.*netcheck[\.exe]*'`; do \
+		upx --brute $$binary; \
+	done;	
 .PHONY: clean
 clean:
 	@rm -rf dist
@@ -110,37 +119,26 @@ endif
 	@rm -rf $(PREFIX)/diffuse
 endif
 
-
 .PHONY: deb
-deb: default
-	@fpm -s dir -t deb \
-	--prefix /usr/local/bin \
-	--name $(NAME) \
-	--version $(VERSION) \
-	--iteration $(RELEASE) \
-	--description "Replicated FUSE mount" \
-	--vendor $(VENDOR) \
-	--maintainer $(MAINTAINER) \
-	--license $(LICENSE) \
-	--url $(PRODUCER_URL) \
-	--deb-compression bzip2 \
-	dist/linux/amd64/diffuse=diffuse
+deb:
+ifeq (, $(shell which nfpm))
+	@echo "Need to install nFPM first..."
+	@go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+endif
+	@VERSION=$(VERSION) nfpm package --packager deb --target dist/linux/amd64/
 
-.phony: rpm
-rpm: default
-	@fpm -s dir -t rpm \
-	--prefix /usr/local \
-	--name $(NAME) \
-	--version $(VERSION) \
-	--iteration $(RELEASE) \
-	--description "Replicated FUSE mount" \
-	--vendor $(VENDOR) \
-	--maintainer $(MAINTAINER) \
-	--license $(LICENSE) \
-	--url $(PRODUCER_URL) \
-	dist/linux/amd64/diffuse=diffuse
+.PHONY: rpm
+rpm:
+ifeq (, $(shell which nfpm))
+	@echo "Need to install nFPM first..."
+	@go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+endif
+	@VERSION=$(VERSION) nfpm package --packager rpm --target dist/linux/amd64/
 
-
-.PHONY: self-signed-cert
-self-signed-cert:
-	openssl req -x509 -newkey rsa:4096 -keyout fetch/server.key -out fetch/server.crt -sha256 -days 3650 -nodes -subj "/C=XX/ST=StateName/L=CityName/O=CompanyName/OU=CompanySectionName/CN=CommonNameOrHostname"
+.PHONY: apk
+apk:
+ifeq (, $(shell which nfpm))
+	@echo "Need to install nFPM first..."
+	@go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+endif
+	@VERSION=$(VERSION) nfpm package --packager apk --target dist/linux/amd64/

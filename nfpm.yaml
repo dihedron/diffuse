@@ -1,0 +1,22 @@
+# check https://nfpm.goreleaser.com/configuration for detailed usage
+name: "diffuse"
+arch: "amd64"
+platform: "linux"
+version: "${VERSION}"
+epoch: 1
+section: default
+provides:
+- diffuse
+maintainer: "Andrea Funtò <dihedron.dev@gmail.com>"
+description: |
+  DifFUSE is an experimental loopback filesystem
+  that provides some synchronisation and replication 
+  of files across a Raft cluster of nodes.
+vendor: "Andrea Funtò"
+homepage: "https://github.com/dihedron"
+license: "MIT"
+contents:
+- src: ./dist/linux/amd64/diffuse
+  dst: /usr/local/bin/diffuse
+rpm:
+  packager: "Andrea Funtò <dihedron.dev@gmail.com>"
