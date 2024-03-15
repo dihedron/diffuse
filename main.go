@@ -58,21 +58,21 @@ func init() {
 	slog.SetDefault(slog.New(handler))
 }
 
-func writeMemProfile(fn string, sigs <-chan os.Signal) {
+func writeMemProfile(filename string, signals <-chan os.Signal) {
 	i := 0
-	for range sigs {
-		fn := fmt.Sprintf("%s-%d.memprof", fn, i)
+	for range signals {
+		filename := fmt.Sprintf("%s-%d.memprof", filename, i)
 		i++
 
-		slog.Debug("writing memory profile", "filename", fn)
-		f, err := os.Create(fn)
+		slog.Debug("writing memory profile", "filename", filename)
+		f, err := os.Create(filename)
 		if err != nil {
-			slog.Error("error creating memory profile file", "filename", fn, "error", err)
+			slog.Error("error creating memory profile file", "filename", filename, "error", err)
 			continue
 		}
 		pprof.WriteHeapProfile(f)
 		if err := f.Close(); err != nil {
-			slog.Error("error cosing memory profile file", "filename", fn, "error", err)
+			slog.Error("error closing memory profile file", "filename", filename, "error", err)
 		}
 	}
 }
@@ -90,7 +90,7 @@ func main() {
 		Debug       bool    `short:"D" long:"debug" description:"Print debugging messages"`
 		Args        struct {
 			Mountpoint string
-			Underlying string
+			Original   string
 		} `positional-args:"yes" required:"yes"`
 	}
 
@@ -121,10 +121,10 @@ func main() {
 		slog.Info("you must unmount gracefully, otherwise the profile file(s) will stay empty!")
 	}
 
-	slog.Debug("creating loopback root", "original", options.Args.Underlying)
-	loopbackRoot, err := fs.NewLoopbackRoot(options.Args.Underlying)
+	slog.Debug("creating loopback root", "original", options.Args.Original)
+	loopbackRoot, err := fs.NewLoopbackRoot(options.Args.Original)
 	if err != nil {
-		slog.Error("error creating loopback filesystem", "original", options.Args.Underlying, "error", err)
+		slog.Error("error creating loopback filesystem", "original", options.Args.Original, "error", err)
 		os.Exit(1)
 	}
 
@@ -142,8 +142,8 @@ func main() {
 			Debug:             options.Debug,
 			DirectMount:       options.DirectMount,
 			DirectMountStrict: options.DirectMount && options.Strict,
-			FsName:            options.Args.Underlying, // First column in "df -T": original dir
-			Name:              "diffuse",               // Second column in "df -T" will be shown as "fuse." + Name
+			FsName:            options.Args.Original, // First column in "df -T": original dir
+			Name:              "diffuse",             // Second column in "df -T" will be shown as "fuse." + Name
 		},
 	}
 	if opts.AllowOther {
@@ -159,20 +159,18 @@ func main() {
 	}
 	server, err := fs.Mount(options.Args.Mountpoint, loopbackRoot, opts)
 	if err != nil {
-		slog.Error("loopback filesystem mount failed", "original", options.Args.Underlying, "mountpoint", options.Args.Mountpoint, "error", err)
+		slog.Error("loopback filesystem mount failed", "original", options.Args.Original, "mountpoint", options.Args.Mountpoint, "error", err)
 		os.Exit(1)
 	}
-	slog.Info("loopback filesystem mounted", "original", options.Args.Underlying, "mountpoint", options.Args.Mountpoint)
+	slog.Info("loopback filesystem mounted", "original", options.Args.Original, "mountpoint", options.Args.Mountpoint)
 
 	signals := make(chan os.Signal, 1)
-	// done := make(chan bool, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-signals
+		slog.Info("unmounting filesystem", "original", options.Args.Original, "mountpoint", options.Args.Mountpoint)
 		server.Unmount()
-		// done <- true
+		slog.Info("filesystem unmounted", "original", options.Args.Original, "mountpoint", options.Args.Mountpoint)
 	}()
-
 	server.Wait()
-	// <-done
 }
